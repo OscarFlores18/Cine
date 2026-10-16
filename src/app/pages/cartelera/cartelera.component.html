@@ -1,0 +1,90 @@
+<div class="cartelera-container">
+  <div class="cine-bar">
+    <div class="cine-info">
+      <span>📍 Cine Seleccionado: <strong class="cine-nombre" (click)="mostrarSelectorCine = true">{{ cineSeleccionado }} ▾</strong></span>
+      <span class="address-tag">Av. Corrientes 3247, CABA</span>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" *ngIf="mostrarSelectorCine">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Elegir Cine</h3>
+        <button class="btn-close" (click)="mostrarSelectorCine = false">✕</button>
+      </div>
+      <p class="subtitle">Elegí tu complejo principal</p>
+      <div class="cine-option" *ngFor="let cine of cinesDisponibles" (click)="seleccionarCine(cine)">
+        <div>
+          <strong>{{ cine }}</strong>
+          <span class="formats-tag">DBOX • DIGITAL 2D • DIGITAL 3D • IMAX</span>
+        </div>
+        <input type="radio" [checked]="cine === cineSeleccionado" readonly />
+      </div>
+    </div>
+  </div>
+
+  <div class="movies-carousel-header">
+    <h2>PELÍCULAS EN CARTELERA</h2>
+  </div>
+
+  <div class="movies-thumbnails">
+    <div 
+      *ngFor="let p of peliculas" 
+      class="movie-thumb"
+      [class.active]="p.id === peliculaSeleccionada?.id"
+      (click)="seleccionarPelicula(p)">
+      <img [src]="p.poster" [alt]="p.titulo" class="thumb-img" />
+      <div class="thumb-title">{{ p.titulo }}</div>
+    </div>
+  </div>
+
+  <div class="movie-detail-section" *ngIf="peliculaSeleccionada">
+    <div class="poster-card">
+      <img [src]="peliculaSeleccionada.poster" [alt]="peliculaSeleccionada.titulo" class="poster-image" />
+      <div class="badges">
+        <span class="badge-age">{{ peliculaSeleccionada.clasificacionEdad }}</span>
+        <span class="badge-time">{{ peliculaSeleccionada.duracion }} min</span>
+        <span class="badge-rating">★ {{ peliculaSeleccionada.calificacion }}</span>
+      </div>
+    </div>
+
+    <div class="schedule-card">
+      <div class="movie-header-info">
+        <h1>{{ peliculaSeleccionada.titulo }}</h1>
+        <p class="genre">{{ peliculaSeleccionada.genero }} | {{ peliculaSeleccionada.formatoDisponible }}</p>
+        <p class="synopsis">{{ peliculaSeleccionada.sinopsis }}</p>
+        <p class="credits"><strong>Director:</strong> {{ peliculaSeleccionada.director }} | <strong>Elenco:</strong> {{ peliculaSeleccionada.reparto }}</p>
+      </div>
+
+      <hr class="divider" />
+
+      <div class="date-section">
+        <h3>HORARIOS Y FUNCIONES EN {{ cineSeleccionado | uppercase }}</h3>
+        <div class="date-selector">
+          <button class="date-btn" [class.active]="diaSeleccionado === 'HOY'" (click)="seleccionarDia('HOY')">HOY</button>
+          <button class="date-btn" [class.active]="diaSeleccionado === 'MAÑANA'" (click)="seleccionarDia('MAÑANA')">MAÑANA</button>
+          <button class="date-btn" [class.active]="diaSeleccionado === 'FINDE'" (click)="seleccionarDia('FINDE')">SÁB / DOM</button>
+        </div>
+      </div>
+
+      <div class="availability-legend">
+        <span><i class="dot alta"></i> Alta Disponibilidad</span>
+        <span><i class="dot media"></i> Media Disponibilidad</span>
+        <span><i class="dot baja"></i> Casi Llena</span>
+      </div>
+
+      <div class="functions-grid-container">
+        <div class="time-grid">
+          <button 
+            *ngFor="let f of funcionesFiltradas" 
+            class="time-btn" 
+            (click)="irAMapa(f)">
+            <span class="time">{{ f.fechaHora | date:'HH:mm' }}</span>
+            <span class="sala-type">{{ f.nombreSala }}</span>
+            <span class="price">${{ f.precioBase }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

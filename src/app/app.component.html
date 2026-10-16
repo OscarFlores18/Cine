@@ -1,1 +1,15 @@
-<app-productos></app-productos>
+<header class="navbar">
+  <div class="logo" routerLink="/cartelera">CINEMARK</div>
+  <nav>
+    <a routerLink="/cartelera" routerLinkActive="active">PELÍCULAS</a>
+    <a routerLink="/productos" routerLinkActive="active">CONFITERÍA</a>
+    <a routerLink="/mapa-asientos/1" class="direct-seats-link">🗺️ MAPA SALA 1</a>
+    <a *ngIf="!authService.isLoggedIn()" routerLink="/login" routerLinkActive="active">INGRESAR</a>
+    <a *ngIf="authService.isLoggedIn()" (click)="salir()" style="cursor: pointer">
+      {{ authService.getUsername() || 'SALIR' }} · SALIR
+    </a>
+  </nav>
+</header>
+<main class="main-content">
+  <router-outlet></router-outlet>
+</main>

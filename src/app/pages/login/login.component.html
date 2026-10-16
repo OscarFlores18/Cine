@@ -1,0 +1,38 @@
+<div class="login-wrapper">
+  <div class="login-card">
+    <h1 class="login-logo">CINEMARK</h1>
+    <p class="login-sub">Ingresá para ver el catálogo de productos</p>
+
+    <form (ngSubmit)="ingresar()">
+      <label class="field">
+        <span>Usuario</span>
+        <input
+          type="text"
+          name="username"
+          [(ngModel)]="username"
+          autocomplete="username"
+          placeholder="admin"
+        />
+      </label>
+
+      <label class="field">
+        <span>Contraseña</span>
+        <input
+          type="password"
+          name="password"
+          [(ngModel)]="password"
+          autocomplete="current-password"
+          placeholder="••••••••"
+        />
+      </label>
+
+      <p class="login-error" *ngIf="errorMsg">{{ errorMsg }}</p>
+
+      <button type="submit" class="login-btn" [disabled]="cargando">
+        {{ cargando ? 'Ingresando...' : 'Ingresar' }}
+      </button>
+    </form>
+
+    <p class="login-hint">Usuario de prueba: <strong>admin / admin123</strong></p>
+  </div>
+</div>
