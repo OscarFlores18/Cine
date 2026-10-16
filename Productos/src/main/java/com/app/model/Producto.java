@@ -11,8 +11,11 @@ import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "productos")
@@ -31,4 +34,14 @@ public class Producto {
 
     @Enumerated(EnumType.STRING)
     private CategoriaProducto categoria;
+
+    // Baja logica: en vez de borrar la fila se marca como inactiva,
+    // asi no se pierde el historial de ventas que referencia este producto.
+    private Boolean activo = true;
+
+    @CreationTimestamp
+    private LocalDateTime creadoEn;
+
+    @UpdateTimestamp
+    private LocalDateTime actualizadoEn;
 }

@@ -72,9 +72,12 @@ public class GatewaySecurityConfig {
                 // ya la autorizó (y el GatewayInterceptor les asegura que no
                 // les peguen directo salteándose este filtro).
                 //
-                // Catalogo (productos y salas): leer = cualquier usuario logueado,
-                // modificar = solo ADMIN.
-                .requestMatchers(HttpMethod.GET, "/productos/**", "/salas/**").authenticated()
+                // Catalogo / confiteria (productos): LECTURA PUBLICA, sin login.
+                // Cualquiera puede ver el catalogo, pero no reservar ni modificar.
+                .requestMatchers(HttpMethod.GET, "/productos/**").permitAll()
+                // Salas: leer = usuario logueado.
+                .requestMatchers(HttpMethod.GET, "/salas/**").authenticated()
+                // Modificar el catalogo (alta/baja/edicion) = solo ADMIN.
                 .requestMatchers("/productos/**", "/salas/**").hasRole("ADMIN")
 
                 // Ventas: cualquier usuario logueado puede comprar y ver las suyas;
