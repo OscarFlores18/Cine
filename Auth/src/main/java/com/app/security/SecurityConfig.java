@@ -82,7 +82,12 @@ public class SecurityConfig {
                 // un JWT vigente para pedir uno nuevo, o para cerrar sesión
                 .requestMatchers(HttpMethod.POST, "/auth/refresh", "/auth/logout").permitAll()
                 .requestMatchers("/actuator/**", "/h2-console/**").permitAll()
-                // registrar usuarios nuevos: solo alguien YA logueado como ADMIN
+                // alta pública de clientes (autoservicio, siempre rol CLIENTE)
+                .requestMatchers(HttpMethod.POST, "/auth/registro-cliente").permitAll()
+                // lookup de nombre/apellido por username: tráfico interno
+                // service-to-service (Ventas vía Feign), no de un usuario final
+                .requestMatchers(HttpMethod.GET, "/auth/usuarios/**").permitAll()
+                // registrar usuarios nuevos (ADMIN/EMPLEADO): solo alguien YA logueado como ADMIN
                 .requestMatchers(HttpMethod.POST, "/auth/register").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )

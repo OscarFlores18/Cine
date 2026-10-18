@@ -23,6 +23,14 @@ public class EmailEnviado {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    // Id de la venta en MS Ventas que origino el correo. Queda null cuando el
+    // mail se dispara a mano por REST (POST /gmail/enviar). Sirve tanto para
+    // auditoria (de que compra salio cada correo) como para idempotencia
+    // (ver EmailEnviadoRepository.existsByVentaId).
+    @Column(name = "venta_id")
+    private Long ventaId;
+
     private String destinatario;
     private String asunto;
     private LocalDateTime fecha;

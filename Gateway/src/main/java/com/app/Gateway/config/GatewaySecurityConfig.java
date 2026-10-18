@@ -72,16 +72,38 @@ public class GatewaySecurityConfig {
                 // ya la autorizó (y el GatewayInterceptor les asegura que no
                 // les peguen directo salteándose este filtro).
                 //
-                // Catalogo (productos y salas): leer = cualquier usuario logueado,
-                // modificar = solo ADMIN.
-                .requestMatchers(HttpMethod.GET, "/productos/**", "/salas/**").authenticated()
-                .requestMatchers("/productos/**", "/salas/**").hasRole("ADMIN")
+                // Catalogo (productos, salas, funciones/cartelera, butacas):
+                // leer = PUBLICO (un visitante sin cuenta tiene que poder
+                // ver la cartelera y el mapa de asientos antes de decidir
+                // registrarse/comprar — asi esta armado el front real:
+                // cartelera y mapa-asientos piden estos datos apenas se
+                // abre la pagina, sin pedir login antes). Modificar = ADMIN.
+                //
+                // OJO: el controller real de Sala expone /funciones/** y
+                // /butacas/** como paths PROPIOS (FuncionController,
+                // ButacaController), NO anidados bajo /salas/** — la regla
+                // vieja solo cubria /salas/** y dejaba esos dos afuera (ni
+                // autorizados ni, antes, ruteados). Agregados aca.
+                .requestMatchers(HttpMethod.GET, "/productos/**", "/salas/**", "/funciones/**", "/butacas/**").permitAll()
+                .requestMatchers("/productos/**", "/salas/**", "/funciones/**", "/butacas/**").hasRole("ADMIN")
+
+                // Webhook de Mercado Pago: lo llama Mercado Pago directamente,
+                // no un usuario logueado nuestro — tiene que quedar abierto o
+                // nunca llega a confirmar ningun pago. Va ANTES de la regla
+                // general de /ventas/** para que no quede tapado por ella.
+                .requestMatchers(HttpMethod.POST, "/ventas/webhook/**").permitAll()
 
                 // Ventas: cualquier usuario logueado puede comprar y ver las suyas;
                 // el listado completo es solo para ADMIN y EMPLEADO.
                 .requestMatchers(HttpMethod.POST, "/ventas").authenticated()
                 .requestMatchers(HttpMethod.GET, "/ventas/mias").authenticated()
+                .requestMatchers(HttpMethod.POST, "/ventas/*/cancelar").authenticated()
                 .requestMatchers("/ventas/**").hasAnyRole("ADMIN", "EMPLEADO")
+
+                // Factura: solo lectura. Cualquier logueado ve las suyas;
+                // ver una factura puntual por id/ventaId queda para ADMIN/EMPLEADO.
+                .requestMatchers(HttpMethod.GET, "/facturas/mias").authenticated()
+                .requestMatchers("/facturas/**").hasAnyRole("ADMIN", "EMPLEADO")
 
                 // Gmail: servicio de notificaciones, solo ADMIN
                 .requestMatchers("/gmail/**").hasRole("ADMIN")

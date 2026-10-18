@@ -17,8 +17,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(gatewayInterceptor)
                 .addPathPatterns("/**")
-                // Admin Server (y Eureka) consultan /actuator directo, sin pasar
-                // por el Gateway: si se bloquea, el monitoreo se cae.
-                .excludePathPatterns("/actuator/**");
+                .excludePathPatterns(
+                        "/actuator/**",
+                        "/swagger-ui/**",
+                        "/swagger-ui.html",
+                        "/v3/api-docs/**"
+                );
     }
 }

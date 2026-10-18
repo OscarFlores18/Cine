@@ -20,13 +20,22 @@ public class DataInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) {
         if (usuarioRepository.count() == 0) {
-            Usuario admin = new Usuario();
-            admin.setUsername("admin");
-            admin.setPassword(passwordEncoder.encode("admin123"));
-            admin.setRol(Rol.ADMIN);
-            usuarioRepository.save(admin);
+            crearUsuario("admin", "admin123", "Admin", "Cine", "admin@cine.local", Rol.ADMIN);
+            crearUsuario("empleado", "empleado123", "Empleado", "De Prueba", "empleado@cine.local", Rol.EMPLEADO);
+            crearUsuario("cliente", "cliente123", "Cliente", "De Prueba", "cliente@cine.local", Rol.CLIENTE);
 
-            log.info("Usuario de prueba creado -> username: admin / password: admin123");
+            log.info("Usuarios de prueba creados -> admin/admin123 (ADMIN), empleado/empleado123 (EMPLEADO), cliente/cliente123 (CLIENTE)");
         }
+    }
+
+    private void crearUsuario(String username, String password, String nombre, String apellido, String email, Rol rol) {
+        Usuario usuario = new Usuario();
+        usuario.setUsername(username);
+        usuario.setPassword(passwordEncoder.encode(password));
+        usuario.setNombre(nombre);
+        usuario.setApellido(apellido);
+        usuario.setEmail(email);
+        usuario.setRol(rol);
+        usuarioRepository.save(usuario);
     }
 }

@@ -10,6 +10,8 @@ public class LoginResponse {
     private String tokenType; // "Bearer"
     private String refreshToken;
     private String username;
+    private String nombre;
+    private String apellido;
     private String rol;
     private long expiresInSeconds;
 }

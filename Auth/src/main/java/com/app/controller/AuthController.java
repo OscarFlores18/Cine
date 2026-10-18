@@ -4,6 +4,7 @@ import com.app.dto.LoginRequest;
 import com.app.dto.LoginResponse;
 import com.app.dto.RefreshTokenRequest;
 import com.app.dto.RegisterRequest;
+import com.app.dto.UsuarioDTO;
 import com.app.model.RefreshToken;
 import com.app.model.Rol;
 import com.app.model.Usuario;
@@ -15,6 +16,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -92,10 +95,47 @@ public class AuthController {
         Usuario nuevo = new Usuario();
         nuevo.setUsername(request.getUsername());
         nuevo.setPassword(passwordEncoder.encode(request.getPassword()));
+        nuevo.setNombre(request.getNombre());
+        nuevo.setApellido(request.getApellido());
+        nuevo.setEmail(request.getEmail());
         nuevo.setRol(rol);
         usuarioRepository.save(nuevo);
 
         return ResponseEntity.status(HttpStatus.CREATED).body("Usuario creado con rol " + rol);
+    }
+
+    // Alta libre (sin login previo) para que un cliente nuevo se registre
+    // solo desde el front público — a diferencia de /auth/register (que
+    // sigue reservado a ADMIN, para crear EMPLEADO/ADMIN), esta siempre
+    // crea CLIENTE: nadie puede autoasignarse un rol más alto por acá.
+    @PostMapping("/registro-cliente")
+    public ResponseEntity<?> registroCliente(@Valid @RequestBody RegisterRequest request) {
+        if (usuarioRepository.findByUsername(request.getUsername()).isPresent()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body("El usuario ya existe");
+        }
+
+        Usuario nuevo = new Usuario();
+        nuevo.setUsername(request.getUsername());
+        nuevo.setPassword(passwordEncoder.encode(request.getPassword()));
+        nuevo.setNombre(request.getNombre());
+        nuevo.setApellido(request.getApellido());
+        nuevo.setEmail(request.getEmail());
+        nuevo.setRol(Rol.CLIENTE);
+        usuarioRepository.save(nuevo);
+
+        return ResponseEntity.ok(armarRespuesta(nuevo));
+    }
+
+    // Lookup liviano usado por OTROS microservicios via Feign (hoy: Ventas,
+    // para poner el nombre/apellido reales en la factura). No pasa por el
+    // Gateway en el flujo normal de Ventas->Auth (Feign llama directo a
+    // esta instancia vía Eureka); queda público a nivel de Auth a propósito
+    // porque es tráfico de servicio a servicio, no de un usuario final.
+    @GetMapping("/usuarios/{username}")
+    public ResponseEntity<?> obtenerUsuario(@PathVariable String username) {
+        return usuarioRepository.findByUsername(username)
+                .map(u -> ResponseEntity.ok(UsuarioDTO.from(u)))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     private LoginResponse armarRespuesta(Usuario usuario) {
@@ -107,6 +147,8 @@ public class AuthController {
                 "Bearer",
                 refreshToken.getToken(),
                 usuario.getUsername(),
+                usuario.getNombre(),
+                usuario.getApellido(),
                 usuario.getRol().name(),
                 jwtService.getExpirationMs() / 1000
         );
