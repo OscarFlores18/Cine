@@ -5,9 +5,9 @@
 #
 # Requiere un archivo .env al lado de este (copiar .env.example y completar
 # los valores reales: JWT_SECRET, GATEWAY_INTERNAL_SECRET, MERCADOPAGO_*,
-# GMAIL_*). Sin .env, Docker Compose usa los defaults de "demo" que estan
-# puestos abajo (funcionan para levantar todo, pero NO sirven para cobrar de
-# verdad ni mandar mails reales).
+# GMAIL_*, *_DB_PASSWORD). Sin .env, Docker Compose usa los defaults de
+# "demo" que estan puestos abajo (funcionan para levantar todo, pero NO
+# sirven para cobrar de verdad ni mandar mails reales).
 #
 # Vive en la RAIZ del repo de backend (cine-main): los "build:" de abajo son
 # paths relativos a este archivo, asi que cada microservicio es simplemente
@@ -15,13 +15,137 @@
 # (cine-frontend)- asi que su "build:" apunta directo a su URL de GitHub: no
 # hace falta tenerlo clonado en la misma maquina para levantar el stack.
 #
-# Todo corre con H2 en memoria (igual que en dev): cada reinicio de un
-# microservicio arranca con la base vacia. Es un sistema de demo/facultad,
-# no esta pensado para persistir datos entre reinicios.
+# Cada microservicio con datos propios (auth, productos, salas, ventas,
+# gmail, factura) tiene SU PROPIO contenedor MySQL, con su usuario, clave,
+# base y volumen -igual que escuelatp-: los datos sobreviven a un
+# "docker compose down" / reinicio, a diferencia de antes (H2 en memoria,
+# se perdia todo cada vez). El perfil "dev" (fuera de Docker) sigue usando
+# H2 en memoria -no cambia nada ahi.
 # =====================================================================
 name: cine
 
 services:
+
+  # ---------- Bases de datos (una por microservicio) ----------
+  auth-db:
+    image: mysql:8.4
+    command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=64M", "--max-connections=50"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AUTH_DB_ROOT_PASSWORD:-root_auth_pass}
+      MYSQL_USER: auth_user
+      MYSQL_PASSWORD: ${AUTH_DB_PASSWORD:-auth_pass}
+      MYSQL_DATABASE: auth_database
+    ports:
+      - "3307:3306"     # para mirar la base desde afuera (Workbench/DBeaver)
+    volumes:
+      - auth_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  productos-db:
+    image: mysql:8.4
+    command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=64M", "--max-connections=50"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${PRODUCTOS_DB_ROOT_PASSWORD:-root_productos_pass}
+      MYSQL_USER: productos_user
+      MYSQL_PASSWORD: ${PRODUCTOS_DB_PASSWORD:-productos_pass}
+      MYSQL_DATABASE: productos_database
+    ports:
+      - "3308:3306"
+    volumes:
+      - productos_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  salas-db:
+    image: mysql:8.4
+    command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=64M", "--max-connections=50"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${SALAS_DB_ROOT_PASSWORD:-root_salas_pass}
+      MYSQL_USER: salas_user
+      MYSQL_PASSWORD: ${SALAS_DB_PASSWORD:-salas_pass}
+      MYSQL_DATABASE: salas_database
+    ports:
+      - "3309:3306"
+    volumes:
+      - salas_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  ventas-db:
+    image: mysql:8.4
+    command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=64M", "--max-connections=50"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${VENTAS_DB_ROOT_PASSWORD:-root_ventas_pass}
+      MYSQL_USER: ventas_user
+      MYSQL_PASSWORD: ${VENTAS_DB_PASSWORD:-ventas_pass}
+      MYSQL_DATABASE: ventas_database
+    ports:
+      - "3310:3306"
+    volumes:
+      - ventas_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  gmail-db:
+    image: mysql:8.4
+    command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=64M", "--max-connections=50"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${GMAIL_DB_ROOT_PASSWORD:-root_gmail_pass}
+      MYSQL_USER: gmail_user
+      MYSQL_PASSWORD: ${GMAIL_DB_PASSWORD:-gmail_pass}
+      MYSQL_DATABASE: gmail_database
+    ports:
+      - "3311:3306"
+    volumes:
+      - gmail_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  factura-db:
+    image: mysql:8.4
+    command: ["--performance-schema=OFF", "--innodb-buffer-pool-size=64M", "--max-connections=50"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${FACTURA_DB_ROOT_PASSWORD:-root_factura_pass}
+      MYSQL_USER: factura_user
+      MYSQL_PASSWORD: ${FACTURA_DB_PASSWORD:-factura_pass}
+      MYSQL_DATABASE: factura_database
+    ports:
+      - "3312:3306"
+    volumes:
+      - factura_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
 
   # ---------- Mensajeria ----------
   rabbitmq:
@@ -95,10 +219,13 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       JWT_SECRET: ${JWT_SECRET:-7J3E+fmsIoAXFpZj26G8wX/L1rvBH9vG5FdumdIqVrU=}
       GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:-auth_pass}
     ports:
       - "8086:8086"
     depends_on:
       configserver:
+        condition: service_healthy
+      auth-db:
         condition: service_healthy
     restart: on-failure
 
@@ -108,10 +235,13 @@ services:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
       GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+      PRODUCTOS_DB_PASSWORD: ${PRODUCTOS_DB_PASSWORD:-productos_pass}
     ports:
       - "8082:8082"
     depends_on:
       configserver:
+        condition: service_healthy
+      productos-db:
         condition: service_healthy
     restart: on-failure
 
@@ -123,12 +253,15 @@ services:
       GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      SALAS_DB_PASSWORD: ${SALAS_DB_PASSWORD:-salas_pass}
     ports:
       - "8083:8083"
     depends_on:
       configserver:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      salas-db:
         condition: service_healthy
     restart: on-failure
 
@@ -145,12 +278,15 @@ services:
       # queda apuntando a localhost -el webhook real de Mercado Pago no va a
       # poder pegarle, pero el resto del sistema funciona igual.
       MERCADOPAGO_NOTIFICATION_URL: ${MERCADOPAGO_NOTIFICATION_URL:-http://localhost:8081/ventas/webhook/mercadopago}
+      VENTAS_DB_PASSWORD: ${VENTAS_DB_PASSWORD:-ventas_pass}
     ports:
       - "8084:8084"
     depends_on:
       configserver:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      ventas-db:
         condition: service_healthy
     restart: on-failure
 
@@ -168,12 +304,15 @@ services:
       # ningún mail (confirmación ni cancelación).
       GMAIL_USERNAME: ${GMAIL_USERNAME:-}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      GMAIL_DB_PASSWORD: ${GMAIL_DB_PASSWORD:-gmail_pass}
     ports:
       - "8085:8085"
     depends_on:
       configserver:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      gmail-db:
         condition: service_healthy
     restart: on-failure
 
@@ -185,12 +324,15 @@ services:
       GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      FACTURA_DB_PASSWORD: ${FACTURA_DB_PASSWORD:-factura_pass}
     ports:
       - "8087:8087"
     depends_on:
       configserver:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      factura-db:
         condition: service_healthy
     restart: on-failure
 
@@ -250,3 +392,12 @@ services:
       - gateway
     profiles: ["ngrok"]
     restart: unless-stopped
+
+# ---------- Volumenes independientes (uno por base) ----------
+volumes:
+  auth_db_data:
+  productos_db_data:
+  salas_db_data:
+  ventas_db_data:
+  gmail_db_data:
+  factura_db_data:
