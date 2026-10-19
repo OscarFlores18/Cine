@@ -1,0 +1,50 @@
+# =====================================================================
+# Override para compilar desde el codigo en disco en vez de bajar las
+# imagenes de Docker Hub. Util si estas probando un cambio que todavia no
+# pusheaste a GitHub (el workflow de Actions solo publica con cada push a
+# main — ver .github/workflows/docker-publish.yml).
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Agregar "build:" sin tocar el "image:" del docker-compose.yml base no es
+# un error: Compose compila con ese Dockerfile y el resultado queda tageado
+# con el mismo nombre que el "image:" de base (maxmegafuego/cine-x:latest),
+# asi que el resto del archivo (env vars, puertos, healthchecks, depends_on)
+# no necesita tocarse para nada.
+# =====================================================================
+services:
+  registry:
+    build: ./registry
+
+  configserver:
+    build: ./configServer
+
+  adminserver:
+    build: ./AdminServer
+
+  auth:
+    build: ./Auth
+
+  productos:
+    build: ./Productos
+
+  salas:
+    build: ./Salas
+
+  ventas:
+    build: ./Ventas
+
+  gmail:
+    build: ./Gmail
+
+  factura:
+    build: ./Factura
+
+  gateway:
+    build: ./Gateway
+
+  # El front sigue siendo un repo aparte: se compila directo desde GitHub
+  # (no hace falta tenerlo clonado al lado de cine-main).
+  front:
+    build: https://github.com/maximiliano-occhiuzzi/cine-frontend.git

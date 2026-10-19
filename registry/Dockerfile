@@ -12,6 +12,6 @@ RUN mvn clean package -DskipTests
 # Runtime: solo el JRE (no Maven, no el codigo fuente), imagen final chica.
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=build /app/target/*.jar app.jar
+COPY --from=build /app/target/*.war app.jar
 EXPOSE 8761
 ENTRYPOINT ["java", "-jar", "app.jar"]

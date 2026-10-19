@@ -1,19 +1,25 @@
 # =====================================================================
 # docker-compose.yml — levanta todo el sistema (cine) con un solo comando.
 #
-#   docker compose up -d --build
+#   docker compose up -d
+#
+# NO COMPILA NADA: baja las imagenes ya armadas de Docker Hub
+# (maxmegafuego/cine-*:latest), publicadas automaticamente por GitHub
+# Actions (ver .github/workflows/docker-publish.yml) cada vez que se hace
+# push a main. Arranca en segundos y no depende de que Maven Central o npm
+# respondan bien en el momento de la muestra.
+#
+# Si en cambio queres compilar desde el codigo que tenes en el disco (por
+# ejemplo estas probando un cambio que todavia no subiste a GitHub), usa el
+# override de al lado:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # Requiere un archivo .env al lado de este (copiar .env.example y completar
 # los valores reales: JWT_SECRET, GATEWAY_INTERNAL_SECRET, MERCADOPAGO_*,
 # GMAIL_*, *_DB_PASSWORD). Sin .env, Docker Compose usa los defaults de
 # "demo" que estan puestos abajo (funcionan para levantar todo, pero NO
 # sirven para cobrar de verdad ni mandar mails reales).
-#
-# Vive en la RAIZ del repo de backend (cine-main): los "build:" de abajo son
-# paths relativos a este archivo, asi que cada microservicio es simplemente
-# "./NombreDelModulo". El front NO esta en este repo -es otro repo aparte
-# (cine-frontend)- asi que su "build:" apunta directo a su URL de GitHub: no
-# hace falta tenerlo clonado en la misma maquina para levantar el stack.
 #
 # Cada microservicio con datos propios (auth, productos, salas, ventas,
 # gmail, factura) tiene SU PROPIO contenedor MySQL, con su usuario, clave,
@@ -165,7 +171,7 @@ services:
 
   # ---------- Infraestructura Spring Cloud ----------
   registry:
-    build: ./registry
+    image: maxmegafuego/cine-registry:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx256m"
     ports:
@@ -179,7 +185,7 @@ services:
     restart: unless-stopped
 
   configserver:
-    build: ./configServer
+    image: maxmegafuego/cine-configserver:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -200,7 +206,7 @@ services:
     restart: unless-stopped
 
   adminserver:
-    build: ./AdminServer
+    image: maxmegafuego/cine-adminserver:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx256m"
       SPRING_PROFILES_ACTIVE: docker
@@ -213,7 +219,7 @@ services:
 
   # ---------- Microservicios ----------
   auth:
-    build: ./Auth
+    image: maxmegafuego/cine-auth:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -230,7 +236,7 @@ services:
     restart: on-failure
 
   productos:
-    build: ./Productos
+    image: maxmegafuego/cine-productos:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -246,7 +252,7 @@ services:
     restart: on-failure
 
   salas:
-    build: ./Salas
+    image: maxmegafuego/cine-salas:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -266,7 +272,7 @@ services:
     restart: on-failure
 
   ventas:
-    build: ./Ventas
+    image: maxmegafuego/cine-ventas:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -291,7 +297,7 @@ services:
     restart: on-failure
 
   gmail:
-    build: ./Gmail
+    image: maxmegafuego/cine-gmail:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -317,7 +323,7 @@ services:
     restart: on-failure
 
   factura:
-    build: ./Factura
+    image: maxmegafuego/cine-factura:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -337,7 +343,7 @@ services:
     restart: on-failure
 
   gateway:
-    build: ./Gateway
+    image: maxmegafuego/cine-gateway:latest
     environment:
       JAVA_TOOL_OPTIONS: "-Xmx320m"
       SPRING_PROFILES_ACTIVE: docker
@@ -351,7 +357,7 @@ services:
 
   # ---------- Front (repo aparte: github.com/maximiliano-occhiuzzi/cine-frontend) ----------
   front:
-    build: https://github.com/maximiliano-occhiuzzi/cine-frontend.git
+    image: maxmegafuego/cine-front:latest
     ports:
       - "4200:80"       # http://localhost:4200
     depends_on:
