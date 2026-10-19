@@ -56,22 +56,31 @@ public class VentaController {
         return ResponseEntity.ok(ventaService.obtenerPorId(id));
     }
 
+    // Verifica que la venta sea del usuario logueado (o que sea ADMIN/EMPLEADO)
+    // antes de cancelar — ver VentaServiceImpl.verificarPropietarioOAdmin.
     @PostMapping("/{id}/cancelar")
     @Operation(summary = "Cancelar una venta: libera la butaca y, si ya estaba pagada, intenta el reembolso")
-    public ResponseEntity<VentaDTO> cancelarVenta(@PathVariable Long id) {
-        return ResponseEntity.ok(ventaService.cancelarVenta(id));
+    public ResponseEntity<VentaDTO> cancelarVenta(@PathVariable Long id,
+                                                   @RequestHeader("X-User-Username") String username,
+                                                   @RequestHeader(value = "X-User-Roles", required = false, defaultValue = "") String roles) {
+        return ResponseEntity.ok(ventaService.cancelarVenta(id, username, roles));
+    }
+
+    // Vuelve a generar el link de pago de una venta propia que quedo
+    // PENDIENTE sin link real (Mercado Pago la rechazo o no respondio la
+    // primera vez) — antes era un callejon sin salida en "Mis compras".
+    @PostMapping("/{id}/reintentar-pago")
+    @Operation(summary = "Volver a generar el link de pago de una venta propia que quedo pendiente")
+    public ResponseEntity<VentaDTO> reintentarPago(@PathVariable Long id,
+                                                    @RequestHeader("X-User-Username") String username,
+                                                    @RequestHeader(value = "X-User-Roles", required = false, defaultValue = "") String roles) {
+        return ResponseEntity.ok(ventaService.reintentarPago(id, username, roles));
     }
 
     // Lo llama Mercado Pago directamente (no el front, no un usuario logueado),
     // asi que no espera ni valida ningun header nuestro. A Mercado Pago solo
-    // le importa recibir un 200 OK rapido.
-    //
-    // OJO PARA EL EQUIPO: hoy el Gateway (GatewaySecurityConfig) no tiene
-    // ninguna ruta permitAll salvo /auth/** y /actuator/**, asi que esta URL
-    // va a ser rechazada con 401 antes de llegar a este microservicio. Hace
-    // falta que el equipo de Gateway agregue algo como:
-    //   .requestMatchers("/ventas/webhook/**").permitAll()
-    // Ver CONTRATOS-REQUERIDOS.md.
+    // le importa recibir un 200 OK rapido. El Gateway ya tiene
+    // POST /ventas/webhook/** como permitAll (GatewaySecurityConfig).
     @PostMapping("/webhook/mercadopago")
     @Operation(summary = "Webhook de Mercado Pago (llamado por Mercado Pago, sin auth nuestra)")
     public ResponseEntity<Void> webhookMercadoPago(@RequestBody MercadoPagoWebhookDTO webhook) {

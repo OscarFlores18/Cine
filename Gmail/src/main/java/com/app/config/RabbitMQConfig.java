@@ -35,6 +35,15 @@ public class RabbitMQConfig {
     public static final String COLA_CONFIRMACION_VENTA = "cola.confirmacion-venta";
     public static final String COLA_CONFIRMACION_VENTA_DLQ = "cola.confirmacion-venta.dlq";
 
+    // Mismo patron que arriba, para el correo de cancelacion. Ventas ya
+    // declaraba y publicaba contra esta cola/routing key desde el principio
+    // (ver RabbitMQConfig de Ventas) -nadie del lado de Email la escuchaba
+    // todavia, asi que los eventos de cancelacion se acumulaban sin que
+    // saliera ningun correo.
+    public static final String CANCELADA_ROUTING_KEY = "venta.cancelada";
+    public static final String COLA_CANCELACION_VENTA = "cola.cancelacion-venta";
+    public static final String COLA_CANCELACION_VENTA_DLQ = "cola.cancelacion-venta.dlq";
+
     @Bean
     public TopicExchange ventaExchange() {
         return new TopicExchange(EXCHANGE);
@@ -54,6 +63,21 @@ public class RabbitMQConfig {
     @Bean
     public Queue ventaConfirmadaDlq() {
         return new Queue(COLA_CONFIRMACION_VENTA_DLQ, true);
+    }
+
+    @Bean
+    public Queue ventaCanceladaQueue() {
+        return new Queue(COLA_CANCELACION_VENTA, true);
+    }
+
+    @Bean
+    public Binding ventaCanceladaBinding(Queue ventaCanceladaQueue, TopicExchange ventaExchange) {
+        return BindingBuilder.bind(ventaCanceladaQueue).to(ventaExchange).with(CANCELADA_ROUTING_KEY);
+    }
+
+    @Bean
+    public Queue ventaCanceladaDlq() {
+        return new Queue(COLA_CANCELACION_VENTA_DLQ, true);
     }
 
     @Bean

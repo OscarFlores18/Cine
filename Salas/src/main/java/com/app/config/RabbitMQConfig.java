@@ -6,6 +6,8 @@ import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.Map;
+
 @Configuration
 public class RabbitMQConfig {
 
@@ -13,9 +15,20 @@ public class RabbitMQConfig {
     public static final String EXCHANGE_VENTAS = "exchange.ventas";
     public static final String ROUTING_KEY_BUTACAS = "routing.butacas";
 
+    // Antes, si cambiarEstadoButaca() fallaba por algo transitorio (ej. la
+    // base de Salas momentaneamente ocupada), VentasConsumer solo lo
+    // logueaba y el mensaje se ACKeaba igual: el evento se perdia para
+    // siempre, sin reintento ni rastro, y la butaca quedaba desincronizada
+    // en silencio. Con esta dead-letter queue, cuando VentasConsumer
+    // rechaza el mensaje (ver AmqpRejectAndDontRequeueException), en vez de
+    // perderse queda acá, visible para revisarlo y reprocesarlo a mano.
+    public static final String DLX = "exchange.ventas.dlx";
+    public static final String QUEUE_BUTACAS_DLQ = "queue.butacas.actualizar.dlq";
+
     @Bean
     public Queue queueButacas() {
-        return new Queue(QUEUE_BUTACAS, true);
+        return new Queue(QUEUE_BUTACAS, true, false, false,
+                Map.of("x-dead-letter-exchange", DLX, "x-dead-letter-routing-key", ROUTING_KEY_BUTACAS));
     }
 
     @Bean
@@ -26,6 +39,21 @@ public class RabbitMQConfig {
     @Bean
     public Binding bindingButacas(Queue queueButacas, DirectExchange exchangeVentas) {
         return BindingBuilder.bind(queueButacas).to(exchangeVentas).with(ROUTING_KEY_BUTACAS);
+    }
+
+    @Bean
+    public DirectExchange exchangeVentasDlx() {
+        return new DirectExchange(DLX);
+    }
+
+    @Bean
+    public Queue queueButacasDlq() {
+        return new Queue(QUEUE_BUTACAS_DLQ, true);
+    }
+
+    @Bean
+    public Binding bindingButacasDlq(Queue queueButacasDlq, DirectExchange exchangeVentasDlx) {
+        return BindingBuilder.bind(queueButacasDlq).to(exchangeVentasDlx).with(ROUTING_KEY_BUTACAS);
     }
 
     @Bean

@@ -38,4 +38,15 @@ public class Usuario {
 
     @Enumerated(EnumType.STRING)
     private Rol rol;
+
+    // Baja logica: un usuario deshabilitado no puede loguearse ni renovar
+    // su sesion (ver AuthController#login/#refresh), pero sus ventas/
+    // facturas/mails viejos quedan intactos en el historial de todos -no
+    // se borra nada, solo se le corta el acceso. Boolean (no boolean) a
+    // proposito: filas viejas, creadas antes de que esta columna existiera,
+    // van a tener NULL aca cuando Hibernate la agregue con ddl-auto=update
+    // (no hace backfill), y el codigo que la lee trata null como
+    // "habilitado" (ver AuthController#estaHabilitado) para no bloquear
+    // sin querer a nadie que ya existia.
+    private Boolean habilitado = Boolean.TRUE;
 }

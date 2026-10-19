@@ -16,6 +16,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -54,7 +55,12 @@ public class ProductoServiceImpl implements ProductoService {
         existente.setNombre(dto.nombre().trim());
         existente.setDescripcion(dto.descripcion());
         existente.setPrecio(dto.precio());
-        existente.setStock(dto.stock());
+        // El stock NO se pisa aca a proposito: el unico camino para
+        // cambiarlo es ajustarStock() (PATCH /productos/{id}/stock), que es
+        // el que tiene el locking optimista. Si este metodo tambien
+        // escribiera stock con el valor que tenia el formulario al abrirse,
+        // una edicion de precio/nombre mientras hay compras en curso podia
+        // pisar y perder ventas que bajaron el stock mientras tanto.
         existente.setCategoria(dto.categoria());
         existente.setImagenUrl(dto.imagenUrl());
 
@@ -93,7 +99,14 @@ public class ProductoServiceImpl implements ProductoService {
                 .toList();
     }
 
+    // @Transactional + @Version en Producto: si dos ajustes de stock del
+    // mismo producto corren casi en simultaneo, el segundo en llegar al
+    // commit falla con ObjectOptimisticLockingFailureException (409) en vez
+    // de pisar silenciosamente el resultado del primero. El llamador
+    // (Ventas, via Feign) es quien decide si reintenta ante un 409 — ver
+    // VentaServiceImpl.ajustarStockProducto.
     @Override
+    @Transactional
     public ProductoSalidaDTO ajustarStock(Long id, Integer cantidad) {
         Producto producto = obtenerEntidad(id);
 
@@ -110,7 +123,7 @@ public class ProductoServiceImpl implements ProductoService {
         }
 
         producto.setStock(nuevoStock);
-        return ProductoSalidaDTO.from(productoRepository.save(producto));
+        return ProductoSalidaDTO.from(productoRepository.saveAndFlush(producto));
     }
 
     @Override

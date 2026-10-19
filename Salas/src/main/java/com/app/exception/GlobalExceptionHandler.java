@@ -1,27 +1,79 @@
 package com.app.exception;
 
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.time.LocalDateTime;
+import java.util.List;
 
+/**
+ * Handler de errores de Salas. Unificado al mismo formato {@link ApiError}
+ * que usa Ventas (timestamp, status, error, message, path, details) en vez
+ * del {@code {"mensaje": "..."}} que devolvia antes: el front interpreta
+ * ambas formas (ver core/utils/error.util.ts), pero tenerlas todas iguales
+ * evita que un error se muestre incompleto o con el texto equivocado segun
+ * de que modulo haya venido.
+ */
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(RecursoNoEncontradoException.class)
-    public ResponseEntity<Map<String, String>> noEncontrado(RecursoNoEncontradoException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("mensaje", ex.getMessage()));
+    public ResponseEntity<ApiError> handleNoEncontrado(RecursoNoEncontradoException ex, HttpServletRequest req) {
+        return build(HttpStatus.NOT_FOUND, ex.getMessage(), req, null);
     }
 
+    // 400 - errores de validacion del body (@Valid): un detalle por campo.
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, String>> datosInvalidos(MethodArgumentNotValidException ex) {
-        Map<String, String> errores = new HashMap<>();
-        ex.getBindingResult().getFieldErrors()
-                .forEach(e -> errores.put(e.getField(), e.getDefaultMessage()));
-        return ResponseEntity.badRequest().body(errores);
+    public ResponseEntity<ApiError> handleValidacion(MethodArgumentNotValidException ex, HttpServletRequest req) {
+        List<String> detalles = ex.getBindingResult().getFieldErrors().stream()
+                .map(e -> e.getField() + ": " + e.getDefaultMessage())
+                .toList();
+        return build(HttpStatus.BAD_REQUEST, "Datos invalidos", req, detalles);
+    }
+
+    // 400 - un query param o path trae un valor que no se puede convertir.
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiError> handleTipoInvalido(MethodArgumentTypeMismatchException ex, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "Valor invalido para '" + ex.getName() + "': " + ex.getValue(), req, null);
+    }
+
+    // 400 - falta un parametro requerido.
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiError> handleParametroFaltante(MissingServletRequestParameterException ex, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "Falta el parametro requerido: " + ex.getParameterName(), req, null);
+    }
+
+    // 400 - body mal formado (JSON invalido) o con tipos incorrectos.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiError> handleBodyIlegible(HttpMessageNotReadableException ex, HttpServletRequest req) {
+        return build(HttpStatus.BAD_REQUEST, "La solicitud tiene datos mal formados.", req, null);
+    }
+
+    // 500 - fallback: cualquier error no previsto se loguea y se devuelve un mensaje generico.
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiError> handleErrorInterno(Exception ex, HttpServletRequest req) {
+        log.error("Error no controlado en Salas", ex);
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "Ocurrio un error inesperado", req, null);
+    }
+
+    private ResponseEntity<ApiError> build(HttpStatus status, String message, HttpServletRequest req, List<String> details) {
+        ApiError error = ApiError.builder()
+                .timestamp(LocalDateTime.now())
+                .status(status.value())
+                .error(status.getReasonPhrase())
+                .message(message)
+                .path(req.getRequestURI())
+                .details(details)
+                .build();
+        return ResponseEntity.status(status).body(error);
     }
 }

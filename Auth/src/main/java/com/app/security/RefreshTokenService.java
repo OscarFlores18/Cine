@@ -61,4 +61,16 @@ public class RefreshTokenService {
                     refreshTokenRepository.save(rt);
                 });
     }
+
+    /**
+     * Revoca TODOS los refresh tokens activos de un usuario de una sola vez
+     * -lo usa AuthController#cambiarEstado al deshabilitarlo, para que no
+     * pueda seguir renovando su sesion desde ningun dispositivo en el que
+     * haya quedado logueado.
+     */
+    public void revocarTodosDe(Usuario usuario) {
+        var activos = refreshTokenRepository.findByUsuarioAndRevocadoFalse(usuario);
+        activos.forEach(rt -> rt.setRevocado(true));
+        refreshTokenRepository.saveAll(activos);
+    }
 }

@@ -84,6 +84,14 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/**", "/h2-console/**").permitAll()
                 // alta pública de clientes (autoservicio, siempre rol CLIENTE)
                 .requestMatchers(HttpMethod.POST, "/auth/registro-cliente").permitAll()
+                // Panel de administracion de usuarios: va ANTES que el
+                // permitAll de /auth/usuarios/** (mas abajo) porque ese
+                // patron con "**" tambien matchea "/auth/usuarios" exacto
+                // -si quedara despues, este listado completo (que SI expone
+                // rol y estado) quedaria publico sin querer.
+                .requestMatchers(HttpMethod.GET, "/auth/usuarios").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PATCH, "/auth/usuarios/*/estado").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.PUT, "/auth/usuarios/*").hasRole("ADMIN")
                 // lookup de nombre/apellido por username: tráfico interno
                 // service-to-service (Ventas vía Feign), no de un usuario final
                 .requestMatchers(HttpMethod.GET, "/auth/usuarios/**").permitAll()

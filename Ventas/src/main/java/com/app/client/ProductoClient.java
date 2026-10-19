@@ -1,10 +1,13 @@
 package com.app.client;
 
 import com.app.config.FeignConfig;
+import com.app.dto.AjustarStockDTO;
 import com.app.dto.ProductoDTO;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 
 /**
  * Cliente Feign (comunicacion SINCRONICA) hacia el microservicio Productos.
@@ -23,4 +26,10 @@ public interface ProductoClient {
 
     @GetMapping("/productos/{id}")
     ProductoDTO obtenerProducto(@PathVariable("id") Long id);
+
+    // Ajuste relativo de stock (negativo descuenta, positivo repone). Se usa
+    // para descontar al confirmarse el pago y para devolver stock si una
+    // venta ya pagada se cancela.
+    @PatchMapping("/productos/{id}/stock")
+    ProductoDTO ajustarStock(@PathVariable("id") Long id, @RequestBody AjustarStockDTO dto);
 }

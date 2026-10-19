@@ -9,6 +9,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -32,6 +33,16 @@ public class Producto {
     private String descripcion;
     private BigDecimal precio;
     private Integer stock;
+
+    // Locking optimista: sin esto, dos compras del mismo producto casi
+    // simultaneas (ej. dos webhooks de Mercado Pago procesandose a la vez)
+    // podian leer el mismo stock, las dos pasar la validacion y las dos
+    // guardar, dejando el stock final mal (incluso negativo). Con @Version,
+    // la segunda escritura que llega tarde falla con
+    // ObjectOptimisticLockingFailureException (409) en vez de pisar la
+    // primera en silencio — ver ajustarStock().
+    @Version
+    private Long version;
 
     @Enumerated(EnumType.STRING)
     private CategoriaProducto categoria;

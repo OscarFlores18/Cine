@@ -2,6 +2,7 @@ package com.app.exception;
 
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -29,6 +30,15 @@ public class GlobalExceptionHandler {
             ProductoInactivoException.class})
     public ResponseEntity<Map<String, String>> conflicto(RuntimeException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("mensaje", ex.getMessage()));
+    }
+
+    // 409 - choque de locking optimista: otro ajuste de stock se guardo
+    // primero sobre el mismo producto (ver Producto.version). El llamador
+    // (Ventas) decide si reintenta.
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, String>> conflictoDeVersion(ObjectOptimisticLockingFailureException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("mensaje", "El producto fue modificado por otra operacion al mismo tiempo. Reintentar."));
     }
 
     // 400 - errores de validacion del body (@Valid)

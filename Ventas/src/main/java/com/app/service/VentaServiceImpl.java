@@ -5,6 +5,7 @@ import com.app.client.MercadoPagoClient;
 import com.app.client.ProductoClient;
 import com.app.client.SalaClient;
 import com.app.config.RabbitMQConfig;
+import com.app.dto.AjustarStockDTO;
 import com.app.dto.ButacaDTO;
 import com.app.dto.FuncionDTO;
 import com.app.dto.MercadoPagoPaymentResponse;
@@ -20,6 +21,7 @@ import com.app.dto.VentaAltaDTO;
 import com.app.dto.VentaDTO;
 import com.app.enums.EstadoReembolso;
 import com.app.enums.EstadoVenta;
+import com.app.exception.AccesoDenegadoException;
 import com.app.exception.ButacaNoDisponibleException;
 import com.app.exception.PagoRechazadoException;
 import com.app.exception.RecursoNoEncontradoException;
@@ -48,8 +50,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -71,6 +75,12 @@ public class VentaServiceImpl implements VentaService {
     @Value("${mercadopago.notification-url:http://localhost:8081/ventas/webhook/mercadopago}")
     private String notificationUrl;
 
+    // A diferencia de notification-url (que necesita ser publica porque la
+    // llama Mercado Pago), esta es la URL del FRONTEND, a la que vuelve el
+    // navegador del propio comprador despues de pagar. localhost anda bien.
+    @Value("${app.frontend-url:http://localhost:4200}")
+    private String frontendUrl;
+
     @Override
     @Transactional
     public VentaDTO altaVenta(IMapper<Venta> mapper, String username) {
@@ -82,6 +92,9 @@ public class VentaServiceImpl implements VentaService {
         List<Long> butacaIds = dto != null ? dto.butacaIds() : List.of();
         if (butacaIds == null || butacaIds.isEmpty()) {
             throw new SolicitudInvalidaException("Hay que elegir al menos una butaca");
+        }
+        if (butacaIds.size() != butacaIds.stream().distinct().count()) {
+            throw new SolicitudInvalidaException("No se puede elegir la misma butaca mas de una vez");
         }
 
         // --- 1) Revalidar TODO en el servidor: nunca confiar en lo que el
@@ -176,8 +189,9 @@ public class VentaServiceImpl implements VentaService {
 
     @Override
     @Transactional
-    public VentaDTO cancelarVenta(Long id) {
+    public VentaDTO cancelarVenta(Long id, String username, String rolesCsv) {
         Venta venta = buscar(id);
+        verificarPropietarioOAdmin(venta, username, rolesCsv);
 
         if (venta.getEstado() == EstadoVenta.CANCELADA) {
             throw new ButacaNoDisponibleException("La venta " + id + " ya estaba cancelada");
@@ -200,15 +214,87 @@ public class VentaServiceImpl implements VentaService {
         // a mano despues.
         if (estadoAnterior == EstadoVenta.PAGADA) {
             venta.setEstadoReembolso(intentarReembolso(venta));
+
+            // El stock solo se habia descontado si la venta llego a PAGADA
+            // (ver procesarWebhookMercadoPago); si estaba PENDIENTE no hay
+            // nada que devolver porque nunca se toco.
+            for (VentaProducto vp : venta.getProductos()) {
+                ajustarStockProducto(vp.getProductoId(), vp.getCantidad());
+            }
         } else {
             venta.setEstadoReembolso(EstadoReembolso.NO_APLICA);
         }
 
         venta = ventaRepository.save(venta);
 
-        publicar(RabbitMQConfig.CANCELADA_ROUTING_KEY, new VentaCanceladaEvent(venta.getId(), venta.getUsername()));
+        publicar(RabbitMQConfig.CANCELADA_ROUTING_KEY, armarEventoCancelacion(venta));
 
         return VentaDTO.from(venta);
+    }
+
+    // Arma el evento que recibe MS Email para el mail de cancelacion. Mismo
+    // criterio que armarFactura(): la venta ya esta cancelada en este punto,
+    // asi que nada de esto puede hacer fallar la cancelacion -si Auth no
+    // responde, el mail sale sin nombreCompleto.
+    private VentaCanceladaEvent armarEventoCancelacion(Venta venta) {
+        VentaCanceladaEvent evento = new VentaCanceladaEvent();
+        evento.setIdVenta(venta.getId());
+        evento.setUsername(venta.getUsername());
+        evento.setNumeroCompra("V-" + venta.getId());
+        evento.setPeliculaTitulo(venta.getPeliculaTitulo());
+        evento.setTotal(venta.getTotal());
+        evento.setEstadoReembolso(venta.getEstadoReembolso().name());
+        evento.setButacas(venta.getButacas().stream()
+                .map(vb -> (vb.getFila() != null ? vb.getFila() : "") + (vb.getNumero() != null ? vb.getNumero() : ""))
+                .toList());
+
+        UsuarioDTO usuario = obtenerUsuarioOpcional(venta.getUsername());
+        if (usuario != null) {
+            evento.setNombreCompleto(usuario.nombreCompleto());
+        }
+
+        return evento;
+    }
+
+    // Antes, si Mercado Pago rechazaba/no respondia al generar la
+    // preferencia (ver el catch en altaVenta), la venta quedaba PENDIENTE
+    // para siempre: no habia forma desde la UI de volver a pedir un link de
+    // pago, ni de cancelarla sola (cancelar si funcionaba, pero obligaba a
+    // perder la seleccion de butacas/confiteria y volver a elegir todo de
+    // cero). Este metodo reusa la MISMA venta (mismas butacas, mismos
+    // productos a los precios ya congelados) y solo vuelve a pedirle una
+    // preferencia nueva a Mercado Pago.
+    @Override
+    @Transactional
+    public VentaDTO reintentarPago(Long id, String username, String rolesCsv) {
+        Venta venta = buscar(id);
+        verificarPropietarioOAdmin(venta, username, rolesCsv);
+
+        if (venta.getEstado() != EstadoVenta.PENDIENTE) {
+            throw new SolicitudInvalidaException(
+                    "La venta " + id + " ya no esta pendiente de pago (estado actual: " + venta.getEstado() + ")");
+        }
+
+        // El precio de la entrada no se guarda suelto en la Venta (solo el
+        // total ya congelado), asi que se despeja aca a partir del total y
+        // los productos (que si tienen su precioUnitario congelado), en vez
+        // de volver a consultar el precio ACTUAL de la funcion en Sala —
+        // eso podria haber cambiado desde que se creo la venta, y el total
+        // ya mostrado/aceptado por el usuario no se tiene que mover.
+        BigDecimal subtotalProductos = venta.getProductos().stream()
+                .map(VentaProducto::subtotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        int cantButacas = venta.getButacas().size();
+        BigDecimal precioEntrada = cantButacas > 0
+                ? venta.getTotal().subtract(subtotalProductos)
+                        .divide(BigDecimal.valueOf(cantButacas), 2, java.math.RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
+
+        MercadoPagoPreferenceResponse preferencia = crearPreferenciaPago(venta, precioEntrada);
+        venta.setPreferenceId(preferencia.id());
+        venta = ventaRepository.save(venta);
+
+        return VentaDTO.from(venta, preferencia.initPoint());
     }
 
     @Override
@@ -264,6 +350,13 @@ public class VentaServiceImpl implements VentaService {
         // caida en este instante (se loguea para seguimiento manual).
         for (VentaButaca vb : venta.getButacas()) {
             publicarCambioButaca(vb.getButacaId(), BUTACA_OCUPADO);
+        }
+
+        // Idem con el stock de confiteria: recien se descuenta ahora que el
+        // pago esta confirmado (no en altaVenta, que todavia es PENDIENTE y
+        // podria no llegar a pagarse nunca).
+        for (VentaProducto vp : venta.getProductos()) {
+            ajustarStockProducto(vp.getProductoId(), -vp.getCantidad());
         }
 
         ventaRepository.save(venta);
@@ -385,6 +478,27 @@ public class VentaServiceImpl implements VentaService {
                 .orElseThrow(() -> new RecursoNoEncontradoException("No existe la venta con id " + id));
     }
 
+    // Antes cancelar una venta (POST /ventas/{id}/cancelar) no comparaba
+    // contra el usuario logueado: el Gateway deja pasar esa ruta a
+    // cualquier CLIENTE autenticado (tiene que ser asi, nadie es dueno de
+    // "ventas/**" en general), asi que CUALQUIER usuario podia cancelar la
+    // compra de OTRO con solo adivinar/iterar el id (numerico y
+    // secuencial), liberandole la butaca y hasta disparandole un reembolso
+    // que no le corresponde. Este chequeo vive aca (no en el Gateway)
+    // porque el Gateway no sabe de quien es cada venta.
+    private void verificarPropietarioOAdmin(Venta venta, String username, String rolesCsv) {
+        if (username != null && username.equals(venta.getUsername())) {
+            return;
+        }
+        Set<String> roles = rolesCsv == null || rolesCsv.isBlank()
+                ? Set.of()
+                : Set.of(Arrays.stream(rolesCsv.split(",")).map(String::trim).toArray(String[]::new));
+        if (roles.contains("ROLE_ADMIN") || roles.contains("ROLE_EMPLEADO")) {
+            return;
+        }
+        throw new AccesoDenegadoException("No tenes permiso para operar sobre la venta " + venta.getId());
+    }
+
     private FuncionDTO obtenerFuncion(Long funcionId) {
         try {
             return salaClient.obtenerFuncion(funcionId);
@@ -433,8 +547,21 @@ public class VentaServiceImpl implements VentaService {
                     "Producto #" + vp.getProductoId(), vp.getCantidad(), vp.getPrecioUnitario()));
         }
 
+        // Las 3 vuelven a "Mis compras": es la unica pantalla que no depende
+        // de estado en memoria del carrito (que ya se perdio: volver de MP
+        // es una navegacion nueva, el Angular se reinicia de cero). Ahi se
+        // pide la venta real al backend y se muestra el estado que tenga.
+        MercadoPagoPreferenceRequest.BackUrls backUrls = new MercadoPagoPreferenceRequest.BackUrls(
+                frontendUrl + "/historial?pago=exitoso&venta=" + venta.getId(),
+                frontendUrl + "/historial?pago=fallido&venta=" + venta.getId(),
+                frontendUrl + "/historial?pago=pendiente&venta=" + venta.getId());
+
+        // auto_return NO se manda: Mercado Pago lo rechaza (400) cuando
+        // back_urls.success no es una URL publica real, y localhost no lo es
+        // (ver nota en MercadoPagoPreferenceRequest). back_urls solo alcanza
+        // para tener el boton "Volver al sitio" en la pantalla de MP.
         MercadoPagoPreferenceRequest request = new MercadoPagoPreferenceRequest(
-                items, String.valueOf(venta.getId()), notificationUrl);
+                items, String.valueOf(venta.getId()), notificationUrl, backUrls, null);
 
         try {
             return mercadoPagoClient.crearPreferencia(request);
@@ -470,6 +597,45 @@ public class VentaServiceImpl implements VentaService {
     // bloquea la venta si Sala/RabbitMQ estan caidos) y reemplaza al viejo
     // "salaClient.cambiarEstadoButaca(...)" (que llamaba a un endpoint que
     // no existe en el Sala real) — ver RabbitMQConfig y VentasConsumer de Sala.
+    // Descuenta (delta negativo) o repone (delta positivo) stock en MS
+    // Productos. Igual que con RabbitMQ, si Productos esta caido o el
+    // producto fue dado de baja esto NO puede tumbar la confirmacion del
+    // pago ni la cancelacion de la venta: se loguea y se sigue. Es el mismo
+    // tipo de ventana ya documentada para las butacas (no hay reserva
+    // intermedia), asi que puede quedar el stock desincronizado en un caso
+    // borde de caida de red justo en ese instante; se resuelve a mano.
+    // Productos usa locking optimista (ver Producto.version): si dos
+    // compras del mismo producto llegan casi juntas, la segunda que intenta
+    // guardar se encuentra con un 409 (conflicto de version), no porque el
+    // ajuste en si sea invalido sino porque alguien mas lo modifico un
+    // instante antes. Reintentar unas pocas veces alcanza para resolverlo
+    // solo, sin perder el ajuste en silencio como pasaba antes.
+    private static final int INTENTOS_AJUSTE_STOCK = 3;
+
+    private void ajustarStockProducto(Long productoId, int delta) {
+        for (int intento = 1; intento <= INTENTOS_AJUSTE_STOCK; intento++) {
+            try {
+                productoClient.ajustarStock(productoId, new AjustarStockDTO(delta));
+                return;
+            } catch (FeignException.Conflict e) {
+                if (intento == INTENTOS_AJUSTE_STOCK) {
+                    log.warn("No se pudo ajustar el stock del producto {} en {} tras {} intentos " +
+                            "(conflicto de version persistente): {}", productoId, delta, intento, e.getMessage());
+                    return;
+                }
+                log.info("Conflicto de version ajustando stock del producto {} en {} (intento {}/{}), reintentando",
+                        productoId, delta, intento, INTENTOS_AJUSTE_STOCK);
+            } catch (FeignException e) {
+                log.warn("No se pudo ajustar el stock del producto {} en {} (Productos caido o rechazo el ajuste): {}",
+                        productoId, delta, e.getMessage());
+                return;
+            } catch (Exception e) {
+                log.warn("Error inesperado ajustando stock del producto {} en {}: {}", productoId, delta, e.getMessage());
+                return;
+            }
+        }
+    }
+
     private void publicarCambioButaca(Long butacaId, String nuevoEstado) {
         publicar(RabbitMQConfig.ROUTING_KEY_BUTACAS, RabbitMQConfig.EXCHANGE_VENTAS_SALA,
                 new EventoEntradaCompradaDTO(butacaId, nuevoEstado));

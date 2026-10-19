@@ -1,0 +1,252 @@
+# =====================================================================
+# docker-compose.yml — levanta todo el sistema (cine) con un solo comando.
+#
+#   docker compose up -d --build
+#
+# Requiere un archivo .env al lado de este (copiar .env.example y completar
+# los valores reales: JWT_SECRET, GATEWAY_INTERNAL_SECRET, MERCADOPAGO_*,
+# GMAIL_*). Sin .env, Docker Compose usa los defaults de "demo" que estan
+# puestos abajo (funcionan para levantar todo, pero NO sirven para cobrar de
+# verdad ni mandar mails reales).
+#
+# Vive en la RAIZ del repo de backend (cine-main): los "build:" de abajo son
+# paths relativos a este archivo, asi que cada microservicio es simplemente
+# "./NombreDelModulo". El front NO esta en este repo -es otro repo aparte
+# (cine-frontend)- asi que su "build:" apunta directo a su URL de GitHub: no
+# hace falta tenerlo clonado en la misma maquina para levantar el stack.
+#
+# Todo corre con H2 en memoria (igual que en dev): cada reinicio de un
+# microservicio arranca con la base vacia. Es un sistema de demo/facultad,
+# no esta pensado para persistir datos entre reinicios.
+# =====================================================================
+name: cine
+
+services:
+
+  # ---------- Mensajeria ----------
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # panel: http://localhost:15672
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- Infraestructura Spring Cloud ----------
+  registry:
+    build: ./registry
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+    ports:
+      - "8761:8761"     # Eureka: http://localhost:8761
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8761'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    restart: unless-stopped
+
+  configserver:
+    build: ./configServer
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      registry:
+        condition: service_healthy
+    ports:
+      - "8888:8888"
+    # El Config Server clona el repo de properties al arrancar (requiere
+    # salida a internet desde el contenedor): recien cuando responde en su
+    # puerto, el resto de los servicios puede pedirle su configuracion.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8888'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  adminserver:
+    build: ./AdminServer
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8090:8090"     # Spring Boot Admin: http://localhost:8090
+    depends_on:
+      registry:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------- Microservicios ----------
+  auth:
+    build: ./Auth
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:-7J3E+fmsIoAXFpZj26G8wX/L1rvBH9vG5FdumdIqVrU=}
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+    ports:
+      - "8086:8086"
+    depends_on:
+      configserver:
+        condition: service_healthy
+    restart: on-failure
+
+  productos:
+    build: ./Productos
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+    ports:
+      - "8082:8082"
+    depends_on:
+      configserver:
+        condition: service_healthy
+    restart: on-failure
+
+  salas:
+    build: ./Salas
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "8083:8083"
+    depends_on:
+      configserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: on-failure
+
+  ventas:
+    build: ./Ventas
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN:?Falta MERCADOPAGO_ACCESS_TOKEN en el .env (token de prueba de tu cuenta de Mercado Pago Developers)}
+      # Sin ngrok (perfil "ngrok" abajo) o sin cargar esto a mano en el .env,
+      # queda apuntando a localhost -el webhook real de Mercado Pago no va a
+      # poder pegarle, pero el resto del sistema funciona igual.
+      MERCADOPAGO_NOTIFICATION_URL: ${MERCADOPAGO_NOTIFICATION_URL:-http://localhost:8081/ventas/webhook/mercadopago}
+    ports:
+      - "8084:8084"
+    depends_on:
+      configserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: on-failure
+
+  gmail:
+    build: ./Gmail
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      # Cuenta remitente real de Gmail + "contraseña de aplicación" (no la
+      # contraseña normal de la cuenta — se genera con verificación en 2
+      # pasos activada). Sin esto el servicio arranca igual, pero no manda
+      # ningún mail (confirmación ni cancelación).
+      GMAIL_USERNAME: ${GMAIL_USERNAME:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+    ports:
+      - "8085:8085"
+    depends_on:
+      configserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: on-failure
+
+  factura:
+    build: ./Factura
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-AXGstSXNH+4A1uVn2dPwfBSealCI1PSochtm/JjHfgE=}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "8087:8087"
+    depends_on:
+      configserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: on-failure
+
+  gateway:
+    build: ./Gateway
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx320m"
+      SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:-7J3E+fmsIoAXFpZj26G8wX/L1rvBH9vG5FdumdIqVrU=}
+    ports:
+      - "8081:8081"     # unica puerta de entrada para el front
+    depends_on:
+      configserver:
+        condition: service_healthy
+    restart: on-failure
+
+  # ---------- Front (repo aparte: github.com/maximiliano-occhiuzzi/cine-frontend) ----------
+  front:
+    build: https://github.com/maximiliano-occhiuzzi/cine-frontend.git
+    ports:
+      - "4200:80"       # http://localhost:4200
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+  # ---------- ngrok (OPCIONAL) ----------
+  # No se levanta con "docker compose up" normal: hay que pedirlo con
+  # --profile ngrok. Sirve para que el webhook de Mercado Pago (que lo llama
+  # un servidor externo, no tu PC) pueda llegar al Gateway.
+  #
+  #   docker compose --profile ngrok up -d
+  #
+  # Requiere NGROK_AUTHTOKEN en el .env (cuenta gratuita en ngrok.com).
+  #
+  # Usa el dominio estatico gratuito de la cuenta (NGROK_DOMAIN en el .env,
+  # hoy: juiciness-photo-senior.ngrok-free.dev): la URL publica queda FIJA
+  # entre reinicios, asi que MERCADOPAGO_NOTIFICATION_URL (tambien en el
+  # .env) no se desactualiza nunca -nada que copiar/pegar a mano el dia de
+  # la muestra. Si alguna vez quieren volver a la URL aleatoria del plan
+  # gratis (por ejemplo si cambia el dominio o la cuenta), el command de
+  # abajo pasa a ser simplemente ["http", "gateway:8081"].
+  ngrok:
+    image: ngrok/ngrok:latest
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?Falta NGROK_AUTHTOKEN en el .env}
+    # Dominio estatico fijo (juiciness-photo-senior.ngrok-free.dev): la URL
+    # publica no cambia entre reinicios, asi que MERCADOPAGO_NOTIFICATION_URL
+    # (en el .env) queda fijo tambien -nada que copiar/pegar a mano el dia
+    # de la muestra.
+    command:
+      - "http"
+      - "--url=https://${NGROK_DOMAIN}"
+      - "gateway:8081"
+    ports:
+      - "4040:4040"     # panel de ngrok: http://localhost:4040 (ahi ves la URL publica actual)
+    depends_on:
+      - gateway
+    profiles: ["ngrok"]
+    restart: unless-stopped

@@ -34,6 +34,15 @@
 			<artifactId>spring-cloud-starter-openfeign</artifactId>
 		</dependency>
 
+		<!-- El cliente HTTP por defecto de Feign (HttpURLConnection, de la JDK)
+		     no soporta el metodo PATCH ("Invalid HTTP method: PATCH") y hacia
+		     fallar en silencio (atrapado como FeignException) el ajuste de
+		     stock en Productos. OkHttp si soporta PATCH. -->
+		<dependency>
+			<groupId>io.github.openfeign</groupId>
+			<artifactId>feign-okhttp</artifactId>
+		</dependency>
+
 		<!-- RabbitMQ: publica VentaConfirmada / VentaCancelada para que
 		     MS Email las consuma de forma asincronica. -->
 		<dependency>

@@ -8,6 +8,7 @@ import com.app.dto.UsuarioDTO;
 import com.app.dto.VentaConfirmadaEvent;
 import com.app.model.EmailEnviado;
 import com.app.repository.EmailEnviadoRepository;
+import com.app.util.QrCodeUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -38,8 +39,10 @@ public class VentaEventListener {
 
         // Idempotencia: RabbitMQ es at-least-once, el mismo evento puede llegar
         // mas de una vez (reentrega, retry del publicador). Si esa venta ya se
-        // proceso, no se vuelve a mandar el correo.
-        if (evento.idVenta() != null && emailEnviadoRepository.existsByVentaId(evento.idVenta())) {
+        // proceso, no se vuelve a mandar el correo. Por tipo CONFIRMACION
+        // especificamente: si despues se cancela, ese es un correo distinto
+        // (ver VentaCanceladaEventListener) y no tiene que bloquearse por esto.
+        if (evento.idVenta() != null && emailEnviadoRepository.existsByVentaIdAndTipo(evento.idVenta(), "CONFIRMACION")) {
             log.warn("La venta {} ya fue procesada; se ignora el evento duplicado", evento.idVenta());
             return;
         }
@@ -63,10 +66,22 @@ public class VentaEventListener {
 
         // El service manda el mail y persiste el registro; el ventaId se guarda
         // junto con el resto para poder auditar de que compra salio cada correo.
-        EmailEnviado registro = emailService.enviar(dto, evento.idVenta());
-
-        log.info("Correo de la venta {} procesado con estado {}",
-                registro.getVentaId(), registro.getEstado());
+        //
+        // emails_enviados.venta_id tiene constraint UNIQUE (ver EmailEnviado):
+        // si dos ejecuciones de este listener para el mismo evento llegaron a
+        // pasar el chequeo existsByVentaId() de arriba casi en simultaneo (la
+        // ventana entre el chequeo y este insert no es atomica), el segundo
+        // insert choca ahi. No es un error real -el primero ya mando el mail
+        // bien- asi que se loguea y se descarta en vez de dejar que la
+        // excepcion tire el mensaje de vuelta a la cola (eso lo reencolaria
+        // en loop: nunca va a dejar de chocar).
+        try {
+            EmailEnviado registro = emailService.enviar(dto, evento.idVenta());
+            log.info("Correo de la venta {} procesado con estado {}",
+                    registro.getVentaId(), registro.getEstado());
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            log.warn("La venta {} ya tenia un correo registrado (carrera entre dos entregas del mismo evento); se ignora", evento.idVenta());
+        }
     }
 
     private String resolverEmail(String username) {
@@ -82,34 +97,129 @@ public class VentaEventListener {
         }
     }
 
+    // Colores del frontend (Cinemark-style): fondo oscuro, acento rojo.
+    private static final String ROJO = "#e50914";
+    private static final String NEGRO = "#141414";
+    private static final String GRIS_OSCURO = "#1f1f1f";
+    private static final String GRIS_BORDE = "#333333";
+    private static final String GRIS_TEXTO = "#bdbdbd";
+    private static final String BLANCO = "#ffffff";
+
     private String armarCuerpo(VentaConfirmadaEvent evento) {
-        StringBuilder sb = new StringBuilder();
         String nombre = evento.nombreCompleto();
-        sb.append("Hola ").append(nombre != null && !nombre.isBlank() ? nombre : evento.username()).append(",\n\n");
-        sb.append("Gracias por tu compra. Resumen:\n");
-        if (evento.peliculaTitulo() != null) sb.append("Pelicula: ").append(evento.peliculaTitulo()).append("\n");
-        if (evento.salaNombre() != null) {
-            sb.append("Sala: ").append(evento.salaNombre());
-            if (evento.salaTipo() != null) sb.append(" (").append(evento.salaTipo()).append(")");
-            sb.append("\n");
+        String nombreMostrado = nombre != null && !nombre.isBlank() ? nombre : evento.username();
+        String numeroCompra = nullASinDato(evento.numeroCompra());
+
+        // El QR lleva el numero de compra (lo que se pide en boleteria para
+        // validar la entrada), nada mas: no tiene sentido meter ahi datos
+        // personales ni de pago.
+        String qrBase64 = QrCodeUtil.generarBase64("CINE-TICKET:" + numeroCompra, 220);
+
+        StringBuilder filasDetalle = new StringBuilder();
+        if (evento.peliculaTitulo() != null) {
+            filasDetalle.append(filaDetalle("Pelicula", evento.peliculaTitulo()));
         }
-        if (evento.funcionFechaHora() != null) sb.append("Funcion: ").append(evento.funcionFechaHora()).append("\n");
+        if (evento.salaNombre() != null) {
+            String sala = evento.salaNombre() + (evento.salaTipo() != null ? " (" + evento.salaTipo() + ")" : "");
+            filasDetalle.append(filaDetalle("Sala", sala));
+        }
+        if (evento.funcionFechaHora() != null) {
+            filasDetalle.append(filaDetalle("Funcion", String.valueOf(evento.funcionFechaHora())));
+        }
         List<String> butacas = evento.butacas();
         if (butacas != null && !butacas.isEmpty()) {
-            sb.append("Butacas: ").append(String.join(", ", butacas)).append("\n");
+            filasDetalle.append(filaDetalle("Butacas", String.join(", ", butacas)));
         }
-        sb.append("\n");
-        agregarItems(sb, evento.entradas());
-        agregarItems(sb, evento.productos());
-        sb.append("\nTotal: $").append(evento.total() != null ? evento.total() : BigDecimal.ZERO);
-        sb.append("\n\nNumero de compra: ").append(nullASinDato(evento.numeroCompra()));
-        return sb.toString();
+
+        StringBuilder filasItems = new StringBuilder();
+        agregarItems(filasItems, evento.entradas());
+        agregarItems(filasItems, evento.productos());
+
+        BigDecimal total = evento.total() != null ? evento.total() : BigDecimal.ZERO;
+
+        String qrHtml = qrBase64 != null
+                ? "<img src=\"data:image/png;base64," + qrBase64 + "\" width=\"180\" height=\"180\" "
+                    + "alt=\"QR de la entrada\" style=\"display:block;margin:0 auto;border-radius:8px;\" />"
+                : "";
+
+        return "<!DOCTYPE html>"
+            + "<html><body style=\"margin:0;padding:0;background:" + GRIS_OSCURO + ";font-family:Arial,Helvetica,sans-serif;\">"
+            + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:" + GRIS_OSCURO + ";padding:24px 0;\">"
+            + "<tr><td align=\"center\">"
+            + "<table role=\"presentation\" width=\"420\" cellpadding=\"0\" cellspacing=\"0\" "
+                + "style=\"background:" + NEGRO + ";border-radius:12px;overflow:hidden;border:1px solid " + GRIS_BORDE + ";\">"
+
+            // Header
+            + "<tr><td style=\"background:" + ROJO + ";padding:18px 24px;\">"
+                + "<span style=\"color:" + BLANCO + ";font-size:20px;font-weight:bold;letter-spacing:1px;\">CINE</span>"
+                + "<span style=\"color:" + BLANCO + ";font-size:13px;float:right;margin-top:4px;\">Confirmacion de compra</span>"
+            + "</td></tr>"
+
+            // Saludo
+            + "<tr><td style=\"padding:20px 24px 0 24px;\">"
+                + "<p style=\"color:" + BLANCO + ";font-size:16px;margin:0 0 4px 0;\">Hola " + nombreMostrado + ",</p>"
+                + "<p style=\"color:" + GRIS_TEXTO + ";font-size:13px;margin:0;\">Gracias por tu compra. Aca va el resumen de tu entrada.</p>"
+            + "</td></tr>"
+
+            // Detalle de la funcion
+            + "<tr><td style=\"padding:16px 24px 0 24px;\">"
+                + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
+                    + "style=\"background:" + GRIS_OSCURO + ";border-radius:8px;\">"
+                    + filasDetalle
+                + "</table>"
+            + "</td></tr>"
+
+            // Items comprados
+            + "<tr><td style=\"padding:16px 24px 0 24px;\">"
+                + "<p style=\"color:" + GRIS_TEXTO + ";font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin:0 0 6px 0;\">Tu compra</p>"
+                + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">"
+                    + filasItems
+                + "</table>"
+            + "</td></tr>"
+
+            // Total
+            + "<tr><td style=\"padding:14px 24px 0 24px;\">"
+                + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-top:1px solid " + GRIS_BORDE + ";padding-top:10px;\">"
+                + "<tr>"
+                    + "<td style=\"color:" + BLANCO + ";font-size:15px;font-weight:bold;padding-top:10px;\">Total</td>"
+                    + "<td align=\"right\" style=\"color:" + ROJO + ";font-size:18px;font-weight:bold;padding-top:10px;\">$" + total + "</td>"
+                + "</tr></table>"
+            + "</td></tr>"
+
+            // QR + numero de compra
+            + "<tr><td style=\"padding:22px 24px 0 24px;\" align=\"center\">"
+                + "<div style=\"background:" + BLANCO + ";padding:14px;border-radius:12px;display:inline-block;\">"
+                    + qrHtml
+                + "</div>"
+                + "<p style=\"color:" + GRIS_TEXTO + ";font-size:11px;margin:10px 0 0 0;\">Mostra este codigo en boleteria</p>"
+                + "<p style=\"color:" + BLANCO + ";font-size:14px;font-weight:bold;letter-spacing:1px;margin:4px 0 0 0;\">" + numeroCompra + "</p>"
+            + "</td></tr>"
+
+            // Footer
+            + "<tr><td style=\"padding:22px 24px 20px 24px;\">"
+                + "<p style=\"color:" + GRIS_TEXTO + ";font-size:11px;text-align:center;margin:0;\">Este es un mail automatico, no respondas a esta direccion.</p>"
+            + "</td></tr>"
+
+            + "</table>"
+            + "</td></tr></table>"
+            + "</body></html>";
+    }
+
+    private String filaDetalle(String etiqueta, String valor) {
+        return "<tr>"
+            + "<td style=\"color:" + GRIS_TEXTO + ";font-size:12px;padding:8px 12px;\">" + etiqueta + "</td>"
+            + "<td align=\"right\" style=\"color:" + BLANCO + ";font-size:12px;padding:8px 12px;\">" + valor + "</td>"
+            + "</tr>";
     }
 
     private void agregarItems(StringBuilder sb, List<FacturaItemEventDTO> items) {
         if (items == null) return;
-        items.forEach(i -> sb.append(i.nombre()).append(" x").append(i.cantidad())
-                .append(" = $").append(i.subtotal()).append("\n"));
+        items.forEach(i -> sb.append("<tr>")
+                .append("<td style=\"color:").append(GRIS_TEXTO).append(";font-size:13px;padding:4px 0;\">")
+                .append(i.nombre()).append(" x").append(i.cantidad()).append("</td>")
+                .append("<td align=\"right\" style=\"color:").append(BLANCO).append(";font-size:13px;padding:4px 0;\">")
+                .append("$").append(i.subtotal()).append("</td>")
+                .append("</tr>"));
     }
 
     private String nullASinDato(String valor) {

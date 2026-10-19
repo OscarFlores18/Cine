@@ -38,6 +38,11 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage(), req, null);
     }
 
+    @ExceptionHandler(AccesoDenegadoException.class)
+    public ResponseEntity<ApiError> handleAccesoDenegado(AccesoDenegadoException ex, HttpServletRequest req) {
+        return build(HttpStatus.FORBIDDEN, ex.getMessage(), req, null);
+    }
+
     @ExceptionHandler(PagoRechazadoException.class)
     public ResponseEntity<ApiError> handlePagoRechazado(PagoRechazadoException ex, HttpServletRequest req) {
         return build(HttpStatus.PAYMENT_REQUIRED, ex.getMessage(), req, null);

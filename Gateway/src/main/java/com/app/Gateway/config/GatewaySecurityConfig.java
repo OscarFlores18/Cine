@@ -1,5 +1,7 @@
 package com.app.Gateway.config;
 
+import com.app.Gateway.exception.ApiErrorAccessDeniedHandler;
+import com.app.Gateway.exception.ApiErrorAuthenticationEntryPoint;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -51,7 +53,9 @@ public class GatewaySecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-                                            JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
+                                            JwtAuthenticationConverter jwtAuthenticationConverter,
+                                            ApiErrorAuthenticationEntryPoint authenticationEntryPoint,
+                                            ApiErrorAccessDeniedHandler accessDeniedHandler) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -98,6 +102,7 @@ public class GatewaySecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/ventas").authenticated()
                 .requestMatchers(HttpMethod.GET, "/ventas/mias").authenticated()
                 .requestMatchers(HttpMethod.POST, "/ventas/*/cancelar").authenticated()
+                .requestMatchers(HttpMethod.POST, "/ventas/*/reintentar-pago").authenticated()
                 .requestMatchers("/ventas/**").hasAnyRole("ADMIN", "EMPLEADO")
 
                 // Factura: solo lectura. Cualquier logueado ve las suyas;
@@ -110,10 +115,23 @@ public class GatewaySecurityConfig {
 
                 .anyRequest().authenticated()
             )
-            .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt
-                .decoder(jwtDecoder)
-                .jwtAuthenticationConverter(jwtAuthenticationConverter)
-            ))
+            // Antes de esto, un 401 (sin JWT / JWT invalido/vencido) o un 403
+            // (rol sin permiso) los devolvia Spring Security "pelados" -sin
+            // JSON que el front pudiera leer igual que al resto de los
+            // errores del sistema (ver core/utils/error.util.ts). Se
+            // enganchan aca, en el propio resource server, y no en un
+            // .exceptionHandling() generico, porque es el punto que Spring
+            // Security documenta para esto -un .exceptionHandling() aparte
+            // puede terminar no aplicando (lo pisa el que registra
+            // internamente oauth2ResourceServer para este mismo caso).
+            .oauth2ResourceServer(oauth2 -> oauth2
+                .jwt(jwt -> jwt
+                    .decoder(jwtDecoder)
+                    .jwtAuthenticationConverter(jwtAuthenticationConverter)
+                )
+                .authenticationEntryPoint(authenticationEntryPoint)
+                .accessDeniedHandler(accessDeniedHandler)
+            )
             // Despues de validar el JWT, agrega X-User-Username y X-User-Roles
             // a la request que se rutea a los microservicios (paso del practico).
             .addFilterAfter(new UserHeadersFilter(), BearerTokenAuthenticationFilter.class);

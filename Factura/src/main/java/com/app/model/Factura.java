@@ -39,6 +39,12 @@ public class Factura {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // unique=true: el service chequea findByVentaId().isPresent() antes de
+    // guardar, pero ese chequeo y el insert posterior no son atomicos entre
+    // si — con esta constraint, una segunda entrega del mismo evento (redelivery
+    // de RabbitMQ) choca a nivel de base en vez de poder crear una factura
+    // duplicada para la misma venta.
+    @Column(unique = true)
     private Long ventaId;
     private String numeroCompra;
     private String username;
